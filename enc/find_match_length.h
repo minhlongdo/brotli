@@ -17,16 +17,14 @@
 #ifndef BROTLI_ENC_FIND_MATCH_LENGTH_H_
 #define BROTLI_ENC_FIND_MATCH_LENGTH_H_
 
-#include <stdint.h>
-
-#include <stddef.h>
 
 #include "./port.h"
+#include "./types.h"
 
 namespace brotli {
 
-// Separate implementation for x86_64, for speed.
-#if defined(__GNUC__) && defined(ARCH_K8)
+// Separate implementation for little-endian 64-bit targets, for speed.
+#if defined(__GNUC__) && defined(_LP64) && defined(IS_LITTLE_ENDIAN)
 
 static inline int FindMatchLengthWithLimit(const uint8_t* s1,
                                            const uint8_t* s2,

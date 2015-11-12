@@ -2,7 +2,9 @@
 
 include ../shared.mk
 
-OBJS = bit_reader.o decode.o huffman.o safe_malloc.o streams.o
+CFLAGS += -Wall
+
+OBJS = bit_reader.o decode.o dictionary.o huffman.o state.o streams.o
 
 all : $(OBJS)
 

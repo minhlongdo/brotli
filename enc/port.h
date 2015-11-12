@@ -17,6 +17,9 @@
 #ifndef BROTLI_ENC_PORT_H_
 #define BROTLI_ENC_PORT_H_
 
+#include <string.h>
+#include "./types.h"
+
 #if defined OS_LINUX || defined OS_CYGWIN
 #include <endian.h>
 #elif defined OS_FREEBSD
@@ -50,12 +53,23 @@
 #endif
 #endif  // __BYTE_ORDER
 
-#if defined(COMPILER_GCC3)
+// Enable little-endian optimization for x64 architecture on Windows.
+#if (defined(_WIN32) || defined(_WIN64)) && defined(_M_X64)
+#define IS_LITTLE_ENDIAN
+#endif
+
+/* Compatibility with non-clang compilers. */
+#ifndef __has_builtin
+#define __has_builtin(x) 0
+#endif
+
+#if (__GNUC__ > 2) || (__GNUC__ == 2 && __GNUC_MINOR__ > 95) || \
+    (defined(__llvm__) && __has_builtin(__builtin_expect))
 #define PREDICT_FALSE(x) (__builtin_expect(x, 0))
 #define PREDICT_TRUE(x) (__builtin_expect(!!(x), 1))
 #else
-#define PREDICT_FALSE(x) x
-#define PREDICT_TRUE(x) x
+#define PREDICT_FALSE(x) (x)
+#define PREDICT_TRUE(x) (x)
 #endif
 
 // Portable handling of unaligned loads, stores, and copies.

@@ -24,9 +24,10 @@
 #ifndef BROTLI_ENC_BROTLI_BIT_STREAM_H_
 #define BROTLI_ENC_BROTLI_BIT_STREAM_H_
 
-#include <stddef.h>
-#include <stdint.h>
 #include <vector>
+
+#include "./metablock.h"
+#include "./types.h"
 
 namespace brotli {
 
@@ -38,12 +39,12 @@ void StoreVarLenUint8(int n, int* storage_ix, uint8_t* storage);
 
 // Stores the compressed meta-block header.
 bool StoreCompressedMetaBlockHeader(bool final_block,
-                                    int length,
+                                    size_t length,
                                     int* storage_ix,
                                     uint8_t* storage);
 
 // Stores the uncompressed meta-block header.
-bool StoreUncompressedMetaBlockHeader(int length,
+bool StoreUncompressedMetaBlockHeader(size_t length,
                                       int* storage_ix,
                                       uint8_t* storage);
 
@@ -63,7 +64,6 @@ void StoreHuffmanTreeOfHuffmanTreeToBitMask(
 // bits[0:length] and stores the encoded tree to the bit stream.
 void BuildAndStoreHuffmanTree(const int *histogram,
                               const int length,
-                              const int quality,
                               uint8_t* depth,
                               uint16_t* bits,
                               int* storage_ix,
@@ -93,7 +93,6 @@ struct BlockSplitCode {
 void BuildAndStoreBlockSplitCode(const std::vector<int>& types,
                                  const std::vector<int>& lengths,
                                  const int num_types,
-                                 const int quality,
                                  BlockSplitCode* code,
                                  int* storage_ix,
                                  uint8_t* storage);
@@ -103,6 +102,46 @@ void StoreBlockSwitch(const BlockSplitCode& code,
                       const int block_ix,
                       int* storage_ix,
                       uint8_t* storage);
+
+bool StoreMetaBlock(const uint8_t* input,
+                    size_t start_pos,
+                    size_t length,
+                    size_t mask,
+                    uint8_t prev_byte,
+                    uint8_t prev_byte2,
+                    bool final_block,
+                    int num_direct_distance_codes,
+                    int distance_postfix_bits,
+                    int literal_context_mode,
+                    const brotli::Command *commands,
+                    size_t n_commands,
+                    const MetaBlockSplit& mb,
+                    int *storage_ix,
+                    uint8_t *storage);
+
+// Stores the meta-block without doing any block splitting, just collects
+// one histogram per block category and uses that for entropy coding.
+bool StoreMetaBlockTrivial(const uint8_t* input,
+                           size_t start_pos,
+                           size_t length,
+                           size_t mask,
+                           bool is_last,
+                           const brotli::Command *commands,
+                           size_t n_commands,
+                           int *storage_ix,
+                           uint8_t *storage);
+
+// This is for storing uncompressed blocks (simple raw storage of
+// bytes-as-bytes).
+bool StoreUncompressedMetaBlock(bool final_block,
+                                const uint8_t* input,
+                                size_t position, size_t mask,
+                                size_t len,
+                                int* storage_ix,
+                                uint8_t* storage);
+
+// Stores an empty metadata meta-block and syncs to a byte boundary.
+void StoreSyncMetaBlock(int* storage_ix, uint8_t* storage);
 
 }  // namespace brotli
 

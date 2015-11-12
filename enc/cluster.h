@@ -18,7 +18,6 @@
 #define BROTLI_ENC_CLUSTER_H_
 
 #include <math.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <algorithm>
 #include <complex>
@@ -31,6 +30,7 @@
 #include "./entropy_encode.h"
 #include "./fast_log.h"
 #include "./histogram.h"
+#include "./types.h"
 
 namespace brotli {
 
@@ -102,7 +102,7 @@ void CompareAndPushToHeap(const HistogramType* out,
   if (store_pair) {
     p.cost_diff += p.cost_combo;
     pairs->push_back(p);
-    push_heap(pairs->begin(), pairs->end(), HistogramPairComparator());
+    std::push_heap(pairs->begin(), pairs->end(), HistogramPairComparator());
   }
 }
 
@@ -165,7 +165,7 @@ void HistogramCombine(HistogramType* out,
     }
     // Pop invalid pairs from the top of the heap.
     while (!pairs.empty() && !pairs[0].valid) {
-      pop_heap(pairs.begin(), pairs.end(), HistogramPairComparator());
+      std::pop_heap(pairs.begin(), pairs.end(), HistogramPairComparator());
       pairs.pop_back();
     }
     // Push new pairs formed with the combined histogram to the heap.
@@ -212,6 +212,7 @@ void HistogramRemap(const HistogramType* in, int in_size,
     }
     symbols[i] = best_out;
   }
+
 
   // Recompute each out based on raw and symbols.
   for (std::set<int>::const_iterator k = all_symbols.begin();
@@ -263,13 +264,13 @@ void ClusterHistograms(const std::vector<HistogramType>& in,
     (*histogram_symbols)[i] = i;
   }
 
-  // Collapse similar histograms within a block type.
-  if (num_contexts > 1) {
-    for (int i = 0; i < num_blocks; ++i) {
-      HistogramCombine(&(*out)[0], &cluster_size[0],
-                       &(*histogram_symbols)[i * num_contexts], num_contexts,
-                       max_histograms);
-    }
+
+  const int max_input_histograms = 64;
+  for (int i = 0; i < in_size; i += max_input_histograms) {
+    int num_to_combine = std::min(in_size - i, max_input_histograms);
+    HistogramCombine(&(*out)[0], &cluster_size[0],
+                     &(*histogram_symbols)[i], num_to_combine,
+                     max_histograms);
   }
 
   // Collapse similar histograms.
@@ -282,7 +283,9 @@ void ClusterHistograms(const std::vector<HistogramType>& in,
 
   // Convert the context map to a canonical form.
   HistogramReindex(out, histogram_symbols);
+
 }
+
 
 }  // namespace brotli
 

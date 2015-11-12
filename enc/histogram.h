@@ -17,17 +17,18 @@
 #ifndef BROTLI_ENC_HISTOGRAM_H_
 #define BROTLI_ENC_HISTOGRAM_H_
 
-#include <stdint.h>
 #include <string.h>
+#include <limits>
 #include <vector>
 #include <utility>
 #include "./command.h"
 #include "./fast_log.h"
 #include "./prefix.h"
+#include "./types.h"
 
 namespace brotli {
 
-class BlockSplit;
+struct BlockSplit;
 
 // A simple container for histograms of data in blocks.
 template<int kDataSize>
@@ -38,6 +39,7 @@ struct Histogram {
   void Clear() {
     memset(data_, 0, sizeof(data_));
     total_count_ = 0;
+    bit_cost_ = std::numeric_limits<double>::infinity();
   }
   void Add(int val) {
     ++data_[val];
@@ -49,7 +51,7 @@ struct Histogram {
   }
   template<typename DataType>
   void Add(const DataType *p, size_t n) {
-    total_count_ += n;
+    total_count_ += static_cast<int>(n);
     n += 1;
     while(--n) ++data_[*p++];
   }
@@ -58,13 +60,6 @@ struct Histogram {
     for (int i = 0; i < kDataSize; ++i) {
       data_[i] += v.data_[i];
     }
-  }
-  double EntropyBitCost() const {
-    double retval = total_count_ * FastLog2(total_count_);
-    for (int i = 0; i < kDataSize; ++i) {
-      retval -= data_[i] * FastLog2(data_[i]);
-    }
-    return retval;
   }
 
   int data_[kDataSize];
@@ -87,27 +82,20 @@ static const int kLiteralContextBits = 6;
 static const int kDistanceContextBits = 2;
 
 void BuildHistograms(
-    const std::vector<Command>& cmds,
+    const Command* cmds,
+    const size_t num_commands,
     const BlockSplit& literal_split,
     const BlockSplit& insert_and_copy_split,
     const BlockSplit& dist_split,
     const uint8_t* ringbuffer,
     size_t pos,
     size_t mask,
+    uint8_t prev_byte,
+    uint8_t prev_byte2,
     const std::vector<int>& context_modes,
     std::vector<HistogramLiteral>* literal_histograms,
     std::vector<HistogramCommand>* insert_and_copy_histograms,
     std::vector<HistogramDistance>* copy_dist_histograms);
-
-void BuildLiteralHistogramsForBlockType(
-    const std::vector<Command>& cmds,
-    const BlockSplit& literal_split,
-    const uint8_t* ringbuffer,
-    size_t pos,
-    size_t mask,
-    int block_type,
-    int context_mode,
-    std::vector<HistogramLiteral>* histograms);
 
 }  // namespace brotli
 

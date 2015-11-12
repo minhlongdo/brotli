@@ -17,23 +17,45 @@
 
 #include <fcntl.h>
 #include <stdio.h>
-#include <string>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
+
+#include <string>
 
 #include "../dec/decode.h"
 #include "../enc/encode.h"
+#include "../enc/streams.h"
 
+
+static bool ParseQuality(const char* s, int* quality) {
+  if (s[0] >= '0' && s[0] <= '9') {
+    *quality = s[0] - '0';
+    if (s[1] >= '0' && s[1] <= '9') {
+      *quality = *quality * 10 + s[1] - '0';
+      return s[2] == 0;
+    }
+    return s[1] == 0;
+  }
+  return false;
+}
 
 static void ParseArgv(int argc, char **argv,
                       char **input_path,
                       char **output_path,
                       int *force,
-                      int *decompress) {
+                      int *quality,
+                      int *decompress,
+                      int *repeat,
+                      int *verbose,
+                      int *lgwin) {
   *force = 0;
   *input_path = 0;
   *output_path = 0;
+  *repeat = 1;
+  *verbose = 0;
+  *lgwin = 22;
   {
     size_t argv0_len = strlen(argv[0]);
     *decompress =
@@ -51,6 +73,13 @@ static void ParseArgv(int argc, char **argv,
                !strcmp("--uncompress", argv[k]) ||
                !strcmp("-d", argv[k])) {
       *decompress = 1;
+      continue;
+    } else if (!strcmp("--verbose", argv[k]) ||
+               !strcmp("-v", argv[k])) {
+      if (*verbose != 0) {
+        goto error;
+      }
+      *verbose = 1;
       continue;
     }
     if (k < argc - 1) {
@@ -72,6 +101,30 @@ static void ParseArgv(int argc, char **argv,
         *output_path = argv[k + 1];
         ++k;
         continue;
+      } else if (!strcmp("--quality", argv[k]) ||
+                 !strcmp("-q", argv[k])) {
+        if (!ParseQuality(argv[k + 1], quality)) {
+          goto error;
+        }
+        ++k;
+        continue;
+      } else if (!strcmp("--repeat", argv[k]) ||
+                 !strcmp("-r", argv[k])) {
+        if (!ParseQuality(argv[k + 1], repeat)) {
+          goto error;
+        }
+        ++k;
+        continue;
+      }  else if (!strcmp("--window", argv[k]) ||
+                  !strcmp("-w", argv[k])) {
+        if (!ParseQuality(argv[k + 1], lgwin)) {
+          goto error;
+        }
+        if (*lgwin < 10 || *lgwin >= 25) {
+          goto error;
+        }
+        ++k;
+        continue;
       }
     }
     goto error;
@@ -79,8 +132,9 @@ static void ParseArgv(int argc, char **argv,
   return;
 error:
   fprintf(stderr,
-          "Usage: %s [--force] [--decompress]"
-          " [--input filename] [--output filename]\n",
+          "Usage: %s [--force] [--quality n] [--decompress]"
+          " [--input filename] [--output filename] [--repeat iters]"
+          " [--verbose] [--window n]\n",
           argv[0]);
   exit(1);
 }
@@ -101,71 +155,108 @@ static FILE *OpenOutputFile(const char *output_path, const int force) {
   if (output_path == 0) {
     return fdopen(STDOUT_FILENO, "wb");
   }
-  if (!force) {
-    struct stat statbuf;
-    if (stat(output_path, &statbuf) == 0) {
-      fprintf(stderr, "output file exists\n");
-      exit(1);
-    }
-  }
-  int fd = open(output_path, O_CREAT | O_WRONLY | O_TRUNC,
+  int excl = force ? 0 : O_EXCL;
+  int fd = open(output_path, O_CREAT | excl | O_WRONLY | O_TRUNC,
                 S_IRUSR | S_IWUSR);
   if (fd < 0) {
+    if (!force) {
+      struct stat statbuf;
+      if (stat(output_path, &statbuf) == 0) {
+        fprintf(stderr, "output file exists\n");
+        exit(1);
+      }
+    }
     perror("open");
     exit(1);
   }
   return fdopen(fd, "wb");
 }
 
+int64_t FileSize(char *path) {
+  FILE *f = fopen(path, "rb");
+  if (f == NULL) {
+    return -1;
+  }
+  if (fseek(f, 0L, SEEK_END) != 0) {
+    fclose(f);
+    return -1;
+  }
+  int64_t retval = ftell(f);
+  if (fclose(f) != 0) {
+    return -1;
+  }
+  return retval;
+}
+
 int main(int argc, char** argv) {
   char *input_path = 0;
   char *output_path = 0;
   int force = 0;
+  int quality = 11;
   int decompress = 0;
-  ParseArgv(argc, argv, &input_path, &output_path, &force, &decompress);
-  FILE* fin = OpenInputFile(input_path);
-  FILE* fout = OpenOutputFile(output_path, force);
-  if (decompress) {
-    BrotliInput in = BrotliFileInput(fin);
-    BrotliOutput out = BrotliFileOutput(fout);
-    if (!BrotliDecompress(in, out)) {
-      fprintf(stderr, "corrupt input\n");
-      exit(1);
-    }
-  } else {
-    const int max_block_size = 1 << 21;
-    const size_t max_output_size = 1 << 22;
-    uint8_t* input_buffer = new uint8_t[max_block_size];
-    uint8_t* output_buffer = new uint8_t[max_output_size];
-    bool input_end = false;
-    int block_size;
-    brotli::BrotliParams params;
-    brotli::BrotliCompressor compressor(params);
-    compressor.WriteStreamHeader();
-    while (!input_end) {
-      block_size = fread(input_buffer, 1, max_block_size, fin);
-      if (block_size == 0) {
-        input_end = true;
+  int repeat = 1;
+  int verbose = 0;
+  int lgwin = 0;
+  ParseArgv(argc, argv, &input_path, &output_path, &force,
+            &quality, &decompress, &repeat, &verbose, &lgwin);
+  const clock_t clock_start = clock();
+  for (int i = 0; i < repeat; ++i) {
+    FILE* fin = OpenInputFile(input_path);
+    FILE* fout = OpenOutputFile(output_path, force);
+    if (decompress) {
+      BrotliInput in = BrotliFileInput(fin);
+      BrotliOutput out = BrotliFileOutput(fout);
+      if (!BrotliDecompress(in, out)) {
+        fprintf(stderr, "corrupt input\n");
+        exit(1);
       }
-      size_t output_size = max_output_size;
-      compressor.WriteMetaBlock(block_size, input_buffer, input_end,
-                                &output_size, output_buffer);
-      if (fwrite(output_buffer, output_size, 1, fout) != 1) {
-        perror("fwrite");
+    } else {
+      brotli::BrotliParams params;
+      params.lgwin = lgwin;
+      params.quality = quality;
+      try {
+        brotli::BrotliFileIn in(fin, 1 << 16);
+        brotli::BrotliFileOut out(fout);
+        if (!BrotliCompress(params, &in, &out)) {
+          fprintf(stderr, "compression failed\n");
+          unlink(output_path);
+          exit(1);
+        }
+      } catch (std::bad_alloc&) {
+        fprintf(stderr, "not enough memory\n");
         unlink(output_path);
         exit(1);
       }
     }
-    delete[] input_buffer;
-    delete[] output_buffer;
+    if (fclose(fin) != 0) {
+      perror("fclose");
+      exit(1);
+    }
+    if (fclose(fout) != 0) {
+      perror("fclose");
+      exit(1);
+    }
   }
-  if (fclose(fin) != 0) {
-    perror("fclose");
-    exit(1);
-  }
-  if (fclose(fout) != 0) {
-    perror("fclose");
-    exit(1);
+  if (verbose) {
+    const clock_t clock_end = clock();
+    double duration =
+        static_cast<double>(clock_end - clock_start) / CLOCKS_PER_SEC;
+    if (duration < 1e-9) {
+      duration = 1e-9;
+    }
+    int64_t uncompressed_size = FileSize(decompress ? output_path : input_path);
+    if (uncompressed_size == -1) {
+      fprintf(stderr, "failed to determine uncompressed file size\n");
+      exit(1);
+    }
+    double uncompressed_bytes_in_MB =
+        (repeat * uncompressed_size) / (1024.0 * 1024.0);
+    if (decompress) {
+      printf("Brotli decompression speed: ");
+    } else {
+      printf("Brotli compression speed: ");
+    }
+    printf("%g MB/s\n", uncompressed_bytes_in_MB / duration);
   }
   return 0;
 }
